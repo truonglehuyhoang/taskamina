@@ -1,228 +1,310 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { format, startOfDay } from "date-fns";
-import { Zap, BatteryCharging, Sun, CalendarIcon } from "lucide-react";
+import { CalendarIcon, Zap } from "lucide-react";
+import { toast } from "sonner";
+
 import EnergyBar from "@/components/EnergyBar";
 import AddTaskForm from "@/components/AddTaskForm";
 import TaskList from "@/components/TaskList";
 import RestPanel from "@/components/RestPanel";
 import ActivityLog from "@/components/ActivityLog";
+import DailyCheckInDialog from "@/components/DailyCheckInDialog";
+import TaskFeedbackDialog from "@/components/TaskFeedbackDialog";
+
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { type Task } from "@/lib/energy";
-import { type LogEntry } from "@/lib/activityLog";
 
-interface DayPlan {
-  started: boolean;
-  startingEnergy: number;
-  energy: number;
-  tasks: Task[];
-  restCount: number;
-  logs: LogEntry[];
-}
+import type { Task } from "@/lib/energy";
+import type { LogEntry } from "@/lib/activityLog";
+import type {
+  ApiActivityLog,
+  ApiDayPlan,
+  ApiTask,
+  CreateCheckInInput,
+} from "@/types/planning";
 
-const emptyPlan = (): DayPlan => ({
-  started: false,
-  startingEnergy: 100,
-  energy: 100,
-  tasks: [],
-  restCount: 0,
-  logs: [],
-});
+import {
+  createCheckIn,
+  createDayPlan,
+  createTask,
+  createTaskFeedback,
+  deleteTask,
+  getActivityLogs,
+  getDayPlan,
+  getTasks,
+  recordRest,
+  updateTaskStatus,
+} from "@/lib/api";
 
-const dateKey = (d: Date) => format(d, "yyyy-MM-dd");
 const today = () => startOfDay(new Date());
 
+const mapLogResult = (
+  result: string,
+): LogEntry["result"] => {
+  if (result === "rest") return "rest";
+  if (result === "strained") return "strained";
+  if (result === "failed" || result === "skipped") return "failed";
+  if (result === "added") return "added";
+  if (result === "removed") return "removed";
+
+  return "success";
+};
+
+const mapActivityLog = (item: ApiActivityLog): LogEntry => ({
+  id: item.activity_log_id,
+  timestamp: new Date(item.created_at),
+  action:
+    typeof item.metadata_json?.task_name === "string"
+      ? item.metadata_json.task_name
+      : item.event_type.replaceAll("_", " "),
+  energyBefore: item.energy_before,
+  energyAfter: item.energy_after,
+  energyChange: item.energy_after - item.energy_before,
+  result: mapLogResult(item.result),
+  details: item.event_type.replaceAll("_", " "),
+});
+
+const mapApiTaskToUiTask = (task: ApiTask): Task => ({
+  id: task.task_id,
+  name: task.name,
+  duration: task.duration_minutes,
+  intensity:
+    task.intensity_level === 1
+      ? "light"
+      : task.intensity_level === 3
+        ? "heavy"
+        : "medium",
+  cost: task.estimated_energy_cost,
+  risk: "SAFE",
+  type: "task",
+});
+
 const Index = () => {
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedDate, setSelectedDate] = useState<Date>(today());
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [plans, setPlans] = useState<Record<string, DayPlan>>(() => ({
-    [dateKey(new Date())]: { ...emptyPlan(), started: true },
-  }));
+
+  const [dayPlan, setDayPlan] = useState<ApiDayPlan | null>(null);
+  const [tasks, setTasks] = useState<ApiTask[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [restCount, setRestCount] = useState(0);
+
+  const [loading, setLoading] = useState(true);
+  const [checkInOpen, setCheckInOpen] = useState(false);
   const [previewCost, setPreviewCost] = useState(0);
   const [previewEnabled, setPreviewEnabled] = useState(false);
-  const [startDialogOpen, setStartDialogOpen] = useState(false);
-  const [pendingDate, setPendingDate] = useState<Date | null>(null);
-  const [pendingEnergy, setPendingEnergy] = useState(100);
 
-  const key = dateKey(selectedDate);
-  const plan = plans[key] ?? emptyPlan();
+  const [feedback, setFeedback] = useState<{
+    task: ApiTask;
+    energyBefore: number;
+    energyAfter: number;
+  } | null>(null);
 
-  // Auto-init today's plan with a Started log if missing
-  useEffect(() => {
-    const k = dateKey(new Date());
-    setPlans((prev) => {
-      if (prev[k]?.logs?.length) return prev;
-      const p = prev[k] ?? { ...emptyPlan(), started: true };
-      return {
-        ...prev,
-        [k]: {
-          ...p,
-          started: true,
-          energy: p.startingEnergy,
-          logs: [
-            {
-              id: crypto.randomUUID(),
-              timestamp: new Date(),
-              action: "Started New Cycle",
-              energyBefore: 0,
-              energyAfter: p.startingEnergy,
-              energyChange: p.startingEnergy,
-              result: "rest",
-              details: `Plan for ${format(new Date(), "PPP")} • Starting ${p.startingEnergy} energy`,
-            },
-          ],
-        },
-      };
-    });
+  const loadPlan = useCallback(async (date: Date) => {
+    setLoading(true);
+
+    try {
+      const plan = await getDayPlan(format(date, "yyyy-MM-dd"));
+
+      if (!plan) {
+        setDayPlan(null);
+        setTasks([]);
+        setLogs([]);
+        setRestCount(0);
+        setCheckInOpen(true);
+        return;
+      }
+
+      const [serverTasks, serverLogs] = await Promise.all([
+        getTasks(plan.day_plan_id),
+        getActivityLogs(plan.day_plan_id),
+      ]);
+
+      setDayPlan(plan);
+      setTasks(serverTasks);
+      setLogs(serverLogs.map(mapActivityLog));
+      setRestCount(
+        serverLogs.filter((item) => item.event_type === "rest_completed").length,
+      );
+      setCheckInOpen(false);
+    } catch {
+      toast.error("Không thể tải kế hoạch trong ngày.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const updatePlan = (updater: (p: DayPlan) => DayPlan) => {
-    setPlans((prev) => ({ ...prev, [key]: updater(prev[key] ?? emptyPlan()) }));
-  };
+  useEffect(() => {
+    void loadPlan(selectedDate);
+  }, [loadPlan, selectedDate]);
 
-  const addLog = (entry: Omit<LogEntry, "id" | "timestamp">) => {
-    updatePlan((p) => ({
-      ...p,
-      logs: [...p.logs, { ...entry, id: crypto.randomUUID(), timestamp: new Date() }],
-    }));
-  };
+  const visibleTasks = useMemo(
+    () =>
+      tasks
+        .filter(
+          (task) => task.status === "pending" || task.status === "doing",
+        )
+        .sort((a, b) => a.position - b.position)
+        .map(mapApiTaskToUiTask),
+    [tasks],
+  );
 
-  const handleCalendarSelect = (d: Date | undefined) => {
-    if (!d) return;
+  const currentEnergy = dayPlan?.remaining_energy ?? 0;
+  const maxEnergy = dayPlan?.energy_budget ?? 100;
+
+  const handleCalendarSelect = (date: Date | undefined) => {
+    if (!date) return;
+
     setCalendarOpen(false);
-    const k = dateKey(d);
-    const existing = plans[k];
-    if (existing?.started) {
-      setSelectedDate(d);
-      setPreviewCost(0);
+    setSelectedDate(date);
+    setPreviewCost(0);
+  };
+
+  const handleCreatePlan = async (input: CreateCheckInInput) => {
+    try {
+      let plan = await getDayPlan(format(selectedDate, "yyyy-MM-dd"));
+
+      if (!plan) {
+        plan = await createDayPlan(format(selectedDate, "yyyy-MM-dd"));
+      }
+
+      await createCheckIn(plan.day_plan_id, input);
+
+      toast.success("Energy plan đã được tạo.");
+      await loadPlan(selectedDate);
+    } catch {
+      toast.error("Không thể tạo energy plan.");
+      throw new Error("Failed to create daily plan");
+    }
+  };
+
+  const handleAddTask = async (task: Task) => {
+    if (!dayPlan) {
+      toast.warning("Hãy check-in trước khi thêm task.");
       return;
     }
-    setPendingDate(d);
-    setPendingEnergy(existing?.startingEnergy ?? 100);
-    setStartDialogOpen(true);
+
+    if (task.type === "rest") {
+      try {
+        await recordRest(
+          dayPlan.day_plan_id,
+          task.duration,
+          Math.abs(task.cost),
+        );
+
+        toast.success(`Recovered +${Math.abs(task.cost)} energy`);
+        await loadPlan(selectedDate);
+      } catch {
+        toast.error("Không thể ghi nhận thời gian nghỉ.");
+      }
+
+      return;
+    }
+
+    try {
+      await createTask(dayPlan.day_plan_id, {
+        task_type_id: "general",
+        name: task.name,
+        duration_minutes: task.duration,
+        intensity_level:
+          task.intensity === "light"
+            ? 1
+            : task.intensity === "heavy"
+              ? 3
+              : 2,
+        estimated_energy_cost: task.cost,
+        status: "pending",
+      });
+
+      toast.success("Task added.");
+      await loadPlan(selectedDate);
+    } catch {
+      toast.error("Không thể thêm task.");
+    }
   };
 
-  const handleConfirmStart = () => {
-    if (!pendingDate) return;
-    const k = dateKey(pendingDate);
-    setPlans((prev) => ({
-      ...prev,
-      [k]: {
-        ...emptyPlan(),
-        started: true,
-        startingEnergy: pendingEnergy,
-        energy: pendingEnergy,
-        logs: [
-          {
-            id: crypto.randomUUID(),
-            timestamp: new Date(),
-            action: "Started New Cycle",
-            energyBefore: 0,
-            energyAfter: pendingEnergy,
-            energyChange: pendingEnergy,
-            result: "rest",
-            details: `Plan for ${format(pendingDate, "PPP")} • Starting ${pendingEnergy} energy`,
-          },
-        ],
-      },
-    }));
-    setSelectedDate(pendingDate);
-    setPreviewCost(0);
-    setStartDialogOpen(false);
-    setPendingDate(null);
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await deleteTask(taskId);
+      await loadPlan(selectedDate);
+      toast.success("Task removed.");
+    } catch {
+      toast.error("Không thể xóa task.");
+    }
   };
 
-  const handleAddTask = (task: Task) => {
-    updatePlan((p) => ({ ...p, tasks: [...p.tasks, task] }));
-    addLog({
-      action: task.name,
-      energyBefore: plan.energy,
-      energyAfter: plan.energy,
-      energyChange: 0,
-      result: "added",
-      details: task.type === "rest" ? `Rest (${task.restType})` : `Cost: ${task.cost} • ${task.risk}`,
-    });
-  };
-
-  const handleDeleteTask = (taskId: string) => {
-    const task = plan.tasks.find((t) => t.id === taskId);
-    if (!task) return;
-    updatePlan((p) => ({ ...p, tasks: p.tasks.filter((t) => t.id !== taskId) }));
-    addLog({
-      action: task.name,
-      energyBefore: plan.energy,
-      energyAfter: plan.energy,
-      energyChange: 0,
-      result: "removed",
-      details: task.type === "rest" ? `Removed rest (+${Math.abs(task.cost)} reserved)` : `Freed ${task.cost} energy reserve`,
-    });
-  };
-
-  const handleDoTask = (taskId: string, cost: number, type: "task" | "rest"): boolean => {
-    const task = plan.tasks.find((t) => t.id === taskId);
-    const taskName = task?.name ?? "Unknown";
-    const energy = plan.energy;
+  const handleDoTask = async (
+    taskId: string,
+    cost: number,
+    type: "task" | "rest",
+  ) => {
+    if (!dayPlan) return false;
 
     if (type === "rest") {
-      const gain = Math.abs(cost);
-      const newEnergy = Math.min(100, energy + gain);
-      const actualGain = newEnergy - energy;
-      updatePlan((p) => ({
-        ...p,
-        energy: newEnergy,
-        tasks: p.tasks.filter((t) => t.id !== taskId),
-        restCount: p.restCount + 1,
-      }));
-      addLog({
-        action: taskName,
-        energyBefore: energy,
-        energyAfter: newEnergy,
-        energyChange: actualGain,
-        result: "rest",
-        details: `Recovered +${actualGain} energy`,
-      });
       return true;
     }
 
-    const isOverloaded = energy < cost;
-    const actualCost = isOverloaded ? Math.round(cost * 0.8) : cost;
-    const newEnergy = Math.max(0, energy - actualCost);
+    const task = tasks.find((item) => item.task_id === taskId);
 
-    updatePlan((p) => ({
-      ...p,
-      energy: newEnergy,
-      tasks: p.tasks.filter((t) => t.id !== taskId),
-    }));
+    if (!task) {
+      toast.error("Không tìm thấy task.");
+      return false;
+    }
 
-    addLog({
-      action: taskName,
-      energyBefore: energy,
-      energyAfter: newEnergy,
-      energyChange: -actualCost,
-      result: isOverloaded ? "strained" : "success",
-      details: isOverloaded ? `Low energy! -${actualCost}` : `-${actualCost} energy`,
-    });
+    try {
+      const energyBefore = dayPlan.remaining_energy;
+      const updatedPlan = await updateTaskStatus(taskId, "done");
 
-    return !isOverloaded;
+      setFeedback({
+        task,
+        energyBefore,
+        energyAfter: updatedPlan.remaining_energy,
+      });
+
+      await loadPlan(selectedDate);
+
+      return energyBefore >= cost;
+    } catch {
+      toast.error("Không thể hoàn thành task.");
+      return false;
+    }
   };
 
-  const clearLogs = () => updatePlan((p) => ({ ...p, logs: [] }));
+  const handleFeedbackSubmit = async (input: {
+    actual_duration_minutes: number;
+    perceived_intensity: number;
+    energy_result: "lighter" | "as_expected" | "heavier";
+  }) => {
+    if (!feedback) return;
+
+    try {
+      await createTaskFeedback(feedback.task.task_id, {
+        ...input,
+        energy_before: feedback.energyBefore,
+        energy_after: feedback.energyAfter,
+        actual_energy_cost:
+          feedback.energyBefore - feedback.energyAfter,
+      });
+
+      toast.success("Feedback saved.");
+      setFeedback(null);
+    } catch {
+      toast.error("Không thể lưu feedback.");
+      throw new Error("Failed to save task feedback");
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-6xl px-4 py-8">
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Zap className="h-7 w-7 text-primary animate-pulse-glow rounded-full" />
+            <Zap className="h-7 w-7 animate-pulse-glow rounded-full text-primary" />
             <h1 className="font-display text-2xl font-bold tracking-widest text-foreground">
               TASKAMINA: ENERGY-BASED TASK PLANNER
             </h1>
@@ -233,101 +315,95 @@ const Index = () => {
               <Button
                 variant="outline"
                 className={cn(
-                  "border-border text-foreground hover:bg-muted font-display tracking-wider",
+                  "border-border font-display tracking-wider text-foreground hover:bg-muted",
                 )}
               >
                 <CalendarIcon className="mr-2 h-4 w-4 text-primary" />
                 {format(selectedDate, "EEE, MMM d, yyyy")}
               </Button>
             </PopoverTrigger>
+
             <PopoverContent className="w-auto p-0" align="end">
               <Calendar
                 mode="single"
                 selected={selectedDate}
                 onSelect={handleCalendarSelect}
                 disabled={(date) => startOfDay(date) < today()}
-                className={cn("p-3 pointer-events-auto")}
+                className="pointer-events-auto p-3"
               />
             </PopoverContent>
           </Popover>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
           <div className="space-y-5">
             <EnergyBar
-              energy={plan.energy}
-              maxEnergy={100}
+              energy={currentEnergy}
+              maxEnergy={maxEnergy}
               previewCost={previewCost}
-              pendingCost={plan.tasks.reduce((s, t) => s + t.cost, 0)}
+              pendingCost={visibleTasks.reduce(
+                (sum, task) => sum + task.cost,
+                0,
+              )}
               previewEnabled={previewEnabled}
               onPreviewEnabledChange={setPreviewEnabled}
             />
-            <AddTaskForm energy={plan.energy} onAdd={handleAddTask} onPreviewCostChange={setPreviewCost} />
+
+            <AddTaskForm
+              energy={currentEnergy}
+              onAdd={handleAddTask}
+              onPreviewCostChange={setPreviewCost}
+            />
+
             <TaskList
-              tasks={plan.tasks}
-              energy={plan.energy}
+              tasks={visibleTasks}
+              energy={currentEnergy}
               onDoTask={handleDoTask}
               onDeleteTask={handleDeleteTask}
             />
-            <RestPanel restCount={plan.restCount} onAddRest={handleAddTask} />
+
+            <RestPanel
+              restCount={restCount}
+              onAddRest={handleAddTask}
+            />
           </div>
 
-          <div className="lg:h-[calc(100vh-8rem)] lg:sticky lg:top-8">
-            <ActivityLog logs={plan.logs} onClear={clearLogs} />
+          <div className="lg:sticky lg:top-8 lg:h-[calc(100vh-8rem)]">
+            <ActivityLog
+              logs={logs}
+              onClear={() =>
+                toast.info("Activity log được lưu làm lịch sử và không thể xóa.")
+              }
+            />
           </div>
         </div>
+
+        {loading && (
+          <p className="mt-4 text-center text-sm text-muted-foreground">
+            Loading plan...
+          </p>
+        )}
       </div>
 
-      <Dialog open={startDialogOpen} onOpenChange={setStartDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="font-display tracking-widest flex items-center gap-2">
-              <Sun className="h-5 w-5 text-primary" />
-              START NEW ENERGY CYCLE
-            </DialogTitle>
-            <DialogDescription>
-              Create a new energy plan for{" "}
-              <span className="text-foreground font-semibold">
-                {pendingDate ? format(pendingDate, "EEEE, MMMM d") : ""}
-              </span>
-            </DialogDescription>
-          </DialogHeader>
+      <DailyCheckInDialog
+        open={checkInOpen}
+        onOpenChange={setCheckInOpen}
+        dateLabel={format(selectedDate, "EEEE, MMMM d")}
+        onSubmit={handleCreatePlan}
+      />
 
-          <div className="space-y-4 pt-2">
-            <div className="rounded-xl border border-border bg-card/80 p-5 space-y-4">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <BatteryCharging className="h-4 w-4 text-accent" />
-                <span>Not feeling 100%? Adjust starting energy</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={pendingEnergy}
-                onChange={(e) => setPendingEnergy(Number(e.target.value))}
-                className="w-full accent-primary cursor-pointer"
-              />
-              <div className="flex items-center justify-between font-display tracking-wider">
-                <span className="text-xs text-muted-foreground">HP</span>
-                <span className="text-2xl text-primary">
-                  {pendingEnergy}
-                  <span className="text-sm text-muted-foreground">/100</span>
-                </span>
-              </div>
-            </div>
-
-            <button
-              onClick={handleConfirmStart}
-              className="w-full rounded-2xl bg-primary text-primary-foreground font-display text-lg font-bold tracking-widest py-5 px-6 animate-pulse-glow hover:scale-[1.02] active:scale-[0.99] transition-transform shadow-[0_0_40px_hsl(var(--primary)/0.5)] hover:shadow-[0_0_60px_hsl(var(--primary)/0.8)]"
-            >
-              <span className="flex items-center justify-center gap-3">
-                <Sun className="h-6 w-6" />
-                START NEW ENERGY CYCLE
-              </span>
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <TaskFeedbackDialog
+        open={Boolean(feedback)}
+        onOpenChange={(open) => {
+          if (!open) setFeedback(null);
+        }}
+        taskName={feedback?.task.name ?? ""}
+        estimatedDuration={feedback?.task.duration_minutes ?? 60}
+        estimatedCost={feedback?.task.estimated_energy_cost ?? 0}
+        energyBefore={feedback?.energyBefore ?? 0}
+        energyAfter={feedback?.energyAfter ?? 0}
+        onSubmit={handleFeedbackSubmit}
+      />
     </div>
   );
 };
