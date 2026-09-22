@@ -6,7 +6,7 @@ import { toast } from "sonner";
 interface TaskListProps {
   tasks: Task[];
   energy: number;
-  onDoTask: (taskId: string, cost: number, type: "task" | "rest") => boolean;
+  onDoTask: (taskId: string, cost: number, type: "task" | "rest") => Promise<boolean>;
   onDeleteTask: (taskId: string) => void;
 }
 
@@ -18,17 +18,19 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
       ? "text-warning"
       : "text-destructive";
 
-  const handleDo = (task: Task) => {
+  const handleDo = async (task: Task) => {
     if (task.type === "rest") {
-      onDoTask(task.id, task.cost, "rest");
-      toast.success(`💤 Recovered +${Math.abs(task.cost)} energy`);
+      await onDoTask(task.id, task.cost, "rest");
+      toast.success(`Recovered +${Math.abs(task.cost)} energy`);
+      return;
+    }
+
+    const success = await onDoTask(task.id, task.cost, "task");
+
+    if (success) {
+      toast.success(`"${task.name}" completed!`);
     } else {
-      const success = onDoTask(task.id, task.cost, "task");
-      if (success) {
-        toast.success(`✅ "${task.name}" completed!`);
-      } else {
-        toast.warning(`⚠️ "${task.name}" done but strained — low energy!`);
-      }
+      toast.warning(`"${task.name}" done but strained - low energy!`);
     }
   };
 
@@ -81,7 +83,7 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
-                onClick={() => handleDo(task)}
+                onClick={() => void handleDo(task)}
                 className={
                   task.type === "rest"
                     ? "bg-primary/20 text-primary hover:bg-primary/30 font-display tracking-wider border border-primary/30"
