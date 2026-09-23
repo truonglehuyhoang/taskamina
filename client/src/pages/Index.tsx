@@ -368,7 +368,7 @@ const Index = () => {
             />
           </div>
 
-          <div className="lg:sticky lg:top-8 lg:h-[calc(100vh-8rem)]">
+          <div className="h-[min(560px,calc(100vh-2rem))] lg:sticky lg:top-8 lg:h-[calc(100vh-8rem)]">
             <ActivityLog
               logs={logs}
               onClear={() =>
