@@ -23,11 +23,16 @@ const AddTaskForm = ({ energy, onAdd, onPreviewCostChange }: AddTaskFormProps) =
   const [intensity, setIntensity] = useState<"light" | "medium" | "heavy">("medium");
   const [preview, setPreview] = useState<{ cost: number; risk: string } | null>(null);
   const isTaskNAmeValid = name.trim().length > 0;
+  const durationMinutes = Number(duration);
+  const isDurationValid =
+    Number.isInteger(durationMinutes) &&
+    durationMinutes >= 5 &&
+    durationMinutes <= 720;
+
+  const canSubmit = isTaskNAmeValid && isDurationValid;
 
   const handlePreview = () => {
-    if(!isTaskNAmeValid){
-      setPreview(null);
-      onPreviewCostChange(0);
+    if(!canSubmit) {
       return;
     }
 
@@ -38,13 +43,13 @@ const AddTaskForm = ({ energy, onAdd, onPreviewCostChange }: AddTaskFormProps) =
   };
 
   const handleAdd = () => {
-    if (!name.trim()) return;
-    const cost = calcCost(Number(duration), intensity);
+    if (!canSubmit) return;
+    const cost = calcCost(durationMinutes, intensity);
     const risk = calcRisk(cost, intensity, energy);
     onAdd({
       id: crypto.randomUUID(),
       name: name.trim(),
-      duration: Number(duration),
+      duration: durationMinutes,
       intensity,
       cost,
       risk,
@@ -87,23 +92,31 @@ const AddTaskForm = ({ energy, onAdd, onPreviewCostChange }: AddTaskFormProps) =
           <label className="text-xs text-muted-foreground font-display tracking-wider mb-1 block">
             DURATION
           </label>
-          <Select value={duration} onValueChange={setDuration}>
-            <SelectTrigger className="bg-muted border-border text-foreground">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="30">30 min</SelectItem>
-              <SelectItem value="60">60 min</SelectItem>
-              <SelectItem value="120">120 min</SelectItem>
-              <SelectItem value="180">180+ min</SelectItem>
-            </SelectContent>
-          </Select>
+          <Input
+            type="number"
+            min={5}
+            max={720}
+            step={1}
+            value={duration}
+            onChange={(e) => {
+              setDuration(e.target.value);
+              setPreview(null);
+              onPreviewCostChange(0);
+            }}
+            className="bg-muted border-border text-foreground"
+          />
         </div>
         <div>
           <label className="text-xs text-muted-foreground font-display tracking-wider mb-1 block">
             INTENSITY
           </label>
-          <Select value={intensity} onValueChange={(v) => setIntensity(v as "light" | "medium" | "heavy")}>
+          <Select
+              value={intensity}
+              onValueChange={(value) => {
+                setIntensity(value as Task["intensity"]);
+                setPreview(null);
+                onPreviewCostChange(0);
+            }}>
             <SelectTrigger className="bg-muted border-border text-foreground">
               <SelectValue />
             </SelectTrigger>
@@ -128,13 +141,13 @@ const AddTaskForm = ({ energy, onAdd, onPreviewCostChange }: AddTaskFormProps) =
         <Button 
           variant="outline" 
           onClick={handlePreview} 
-          disabled={!isTaskNAmeValid}
+          disabled={!canSubmit}
           className="border-border text-foreground hover:bg-muted">
           <Eye className="mr-2 h-4 w-4" /> Preview
         </Button>
         <Button 
           onClick={handleAdd} 
-          disabled={!isTaskNAmeValid}
+          disabled={!canSubmit}
           className="bg-primary text-primary-foreground hover:bg-primary/90">
           <Plus className="mr-2 h-4 w-4" /> Add Task
         </Button>

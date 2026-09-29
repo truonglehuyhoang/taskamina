@@ -9,17 +9,34 @@ export interface Task {
   restType?: "short" | "nap" | "deep";
 }
 
-const durationMap: Record<number, number> = { 30: 10, 60: 20, 120: 35, 180: 50 };
-const intensityMap: Record<string, number> = { light: 0.8, medium: 1, heavy: 1.3 };
+const intensityMultiplier = {
+  light: 0.8,
+  medium: 1,
+  heavy: 1.3,
+} as const;
 
-export function calcCost(dur: number, intensity: string): number {
-  return Math.round((durationMap[dur] ?? 20) * (intensityMap[intensity] ?? 1));
+export function calcCost(
+  durationMinutes: number,
+  intensity: Task["intensity"],
+): number {
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 5 || durationMinutes > 720) {
+    throw new Error("Duration must be between 5 and 720 minutes");
+  }
+
+  const baseCost =
+    durationMinutes <= 60
+      ? durationMinutes / 3
+      : 20 + (durationMinutes - 60) * 0.25;
+
+  return Math.round(baseCost * intensityMultiplier[intensity]);
 }
 
-export function calcRisk(cost: number, intensity: string, energy: number): string {
-  const base: Record<string, number> = { light: 1, medium: 2, heavy: 3 };
-  const risk = (base[intensity] ?? 2) + cost / 20 + (100 - energy) / 25;
-  if (risk < 3) return "SAFE";
-  if (risk < 5) return "MODERATE";
-  return "HIGH";
+export function calcRisk(
+  cost: number,
+  _intensity: Task["intensity"],
+  remainingEnergy: number,
+): string {
+  if (remainingEnergy <= 0 || cost > remainingEnergy) return "HIGH";
+  if (cost >= remainingEnergy * 0.5) return "MODERATE";
+  return "SAFE";
 }
