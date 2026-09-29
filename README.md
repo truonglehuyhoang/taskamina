@@ -21,6 +21,12 @@ Energy values are planning estimates, not measurements of physical or mental hea
 - Database: SQLite
 - Windows desktop beta: PyInstaller and pywebview
 
+## Download the Windows beta
+
+Download `Taskamina.exe` from the [Releases page](https://github.com/truonglehuyhoang/taskamina/releases). Run the executable and choose a local data folder on first launch. No Python or Node.js installation is required to use the prebuilt executable.
+
+This is a Windows beta, not an installer. For development or building from source, follow the instructions below.
+
 ## Run for development
 
 Requirements: Python 3.13, Node.js and npm.
