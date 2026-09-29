@@ -4,6 +4,8 @@ from fastapi import APIRouter
 
 from app.database import get_connection
 
+from datetime import datetime, timezone
+
 router = APIRouter(prefix="/api")
 
 
@@ -23,6 +25,10 @@ def get_activity_logs(day_plan_id: str):
     logs = []
     for row in rows:
         item = dict(row)
+        created_at = datetime.fromisoformat(item["created_at"])
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        item["created_at"] = created_at.isoformat()
         item["metadata_json"] = (
             json.loads(item["metadata_json"])
             if item["metadata_json"]
