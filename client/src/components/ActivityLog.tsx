@@ -22,7 +22,7 @@ const ActivityLog = ({ logs, onClear }: ActivityLogProps) => {
     date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   return (
-    <div className="rounded-lg bg-card border border-border flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col rounded-lg border border-border bg-card">
       <div className="flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-2">
           <ClipboardList className="h-5 w-5 text-primary" />
@@ -42,7 +42,7 @@ const ActivityLog = ({ logs, onClear }: ActivityLogProps) => {
         )}
       </div>
 
-      <ScrollArea className="flex-1 p-4">
+      <ScrollArea className="min-h-0 flex-1 p-4">
         {logs.length === 0 ? (
           <p className="text-muted-foreground text-sm text-center py-8">
             No activity yet. Start adding tasks!

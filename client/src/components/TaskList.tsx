@@ -1,4 +1,4 @@
-import { Sword, Zap, AlertTriangle, Coffee, X } from "lucide-react";
+import { Check, Zap, AlertTriangle, Coffee, X, ArrowUp, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { type Task } from "@/lib/energy";
 import { toast } from "sonner";
@@ -6,11 +6,16 @@ import { toast } from "sonner";
 interface TaskListProps {
   tasks: Task[];
   energy: number;
-  onDoTask: (taskId: string, cost: number, type: "task" | "rest") => Promise<boolean>;
+  onDoTask: (
+    taskId: string,
+    cost: number,
+    type: "task" | "rest",
+  ) => Promise<boolean | null>;
   onDeleteTask: (taskId: string) => void;
+  onMoveTask: (taskId: string, direction: "up" | "down") => void;
 }
 
-const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
+const TaskList = ({ tasks, energy, onDoTask, onDeleteTask, onMoveTask }: TaskListProps) => {
   const riskColor = (r: string) =>
     r === "SAFE"
       ? "text-primary"
@@ -19,18 +24,13 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
       : "text-destructive";
 
   const handleDo = async (task: Task) => {
-    if (task.type === "rest") {
-      await onDoTask(task.id, task.cost, "rest");
-      toast.success(`Recovered +${Math.abs(task.cost)} energy`);
-      return;
-    }
-
-    const success = await onDoTask(task.id, task.cost, "task");
+    const success = await onDoTask(task.id, task.cost, task.type);
+    if (success === null || task.type === "rest") return;
 
     if (success) {
-      toast.success(`"${task.name}" completed!`);
+      toast.success(`"${task.name}" completed.`);
     } else {
-      toast.warning(`"${task.name}" done but strained - low energy!`);
+      toast.warning(`"${task.name}" completed with low energy.`);
     }
   };
 
@@ -53,7 +53,7 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
         TASKS
       </h2>
       <div className="space-y-3">
-        {tasks.map((task) => (
+        {tasks.map((task, index) => (
           <div
             key={task.id}
             className={`rounded-md p-4 flex items-center justify-between gap-4 ${
@@ -65,7 +65,7 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
               <div className="flex items-center gap-3 text-xs mt-1">
                 {task.type === "rest" ? (
                   <span className="flex items-center gap-1 text-primary">
-                    <Zap className="h-3 w-3" /> +{Math.abs(task.cost)}
+                    <Zap className="h-3 w-3" />up to +{Math.abs(task.cost)}
                   </span>
                 ) : (
                   <>
@@ -80,7 +80,29 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
                 <span className="text-muted-foreground">{task.duration} min</span>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-1">
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={index === 0}
+                onClick={() => onMoveTask(task.id, "up")}
+                aria-label={`Move ${task.name} up`}
+                title="Move up"
+              >
+                <ArrowUp className="h-4 w-4" />
+              </Button>
+
+              <Button
+                size="icon"
+                variant="ghost"
+                disabled={index === tasks.length - 1}
+                onClick={() => onMoveTask(task.id, "down")}
+                aria-label={`Move ${task.name} down`}
+                title="Move down"
+              >
+                <ArrowDown className="h-4 w-4" />
+              </Button>
+
               <Button
                 size="sm"
                 onClick={() => void handleDo(task)}
@@ -91,9 +113,9 @@ const TaskList = ({ tasks, energy, onDoTask, onDeleteTask }: TaskListProps) => {
                 }
               >
                 {task.type === "rest" ? (
-                  <><Coffee className="mr-1 h-4 w-4" /> REST</>
+                  <><Coffee className="mr-1 h-4 w-4" /> FINISH REST</>
                 ) : (
-                  <><Sword className="mr-1 h-4 w-4" /> DO</>
+                  <><Check className="mr-1 h-4 w-4" /> MARK AS DONE</>
                 )}
               </Button>
               <Button

@@ -25,6 +25,8 @@ export interface ApiTask {
   position: number;
   created_at: string;
   updated_at: string;
+  task_kind: "work" | "rest";
+  estimated_recovery_gain: number;
 }
 
 export interface ApiActivityLog {
@@ -44,6 +46,6 @@ export interface CreateCheckInInput {
   sleep_quality: "poor" | "okay" | "good";
   mood_level: "low" | "neutral" | "good";
   stress_level: "low" | "medium" | "high";
-  day_mode: "survival" | "normal" | "focused";
+  day_mode: "survival" | "tired" | "normal" | "focused";
   note?: string;
 }

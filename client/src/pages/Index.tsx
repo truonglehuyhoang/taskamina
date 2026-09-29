@@ -38,8 +38,8 @@ import {
   getActivityLogs,
   getDayPlan,
   getTasks,
-  recordRest,
   updateTaskStatus,
+  moveTask,
 } from "@/lib/api";
 
 const today = () => startOfDay(new Date());
@@ -80,9 +80,12 @@ const mapApiTaskToUiTask = (task: ApiTask): Task => ({
       : task.intensity_level === 3
         ? "heavy"
         : "medium",
-  cost: task.estimated_energy_cost,
+  cost:
+    task.task_kind === "rest"
+      ? -task.estimated_recovery_gain
+      : task.estimated_energy_cost,
   risk: "SAFE",
-  type: "task",
+  type: task.task_kind === "rest" ? "rest" : "task",
 });
 
 const Index = () => {
@@ -128,12 +131,10 @@ const Index = () => {
       setDayPlan(plan);
       setTasks(serverTasks);
       setLogs(serverLogs.map(mapActivityLog));
-      setRestCount(
-        serverLogs.filter((item) => item.event_type === "rest_completed").length,
-      );
+      setRestCount(serverTasks.filter((task) => task.task_kind === "rest").length);
       setCheckInOpen(false);
     } catch {
-      toast.error("Không thể tải kế hoạch trong ngày.");
+      toast.error("Could not load the daily plan.");
     } finally {
       setLoading(false);
     }
@@ -175,56 +176,41 @@ const Index = () => {
 
       await createCheckIn(plan.day_plan_id, input);
 
-      toast.success("Energy plan đã được tạo.");
+      toast.success("Daily plan created.");
       await loadPlan(selectedDate);
     } catch {
-      toast.error("Không thể tạo energy plan.");
+      toast.error("Could not create the daily plan.");
       throw new Error("Failed to create daily plan");
     }
   };
 
   const handleAddTask = async (task: Task) => {
     if (!dayPlan) {
-      toast.warning("Hãy check-in trước khi thêm task.");
-      return;
-    }
-
-    if (task.type === "rest") {
-      try {
-        await recordRest(
-          dayPlan.day_plan_id,
-          task.duration,
-          Math.abs(task.cost),
-        );
-
-        toast.success(`Recovered +${Math.abs(task.cost)} energy`);
-        await loadPlan(selectedDate);
-      } catch {
-        toast.error("Không thể ghi nhận thời gian nghỉ.");
-      }
-
+      toast.warning("Check in before adding a task.");
       return;
     }
 
     try {
       await createTask(dayPlan.day_plan_id, {
-        task_type_id: "general",
+        task_type_id: task.type === "rest" ? "rest" : "general",
+        task_kind: task.type === "rest" ? "rest" : "work",
         name: task.name,
         duration_minutes: task.duration,
         intensity_level:
-          task.intensity === "light"
+          task.type === "rest" || task.intensity === "light"
             ? 1
             : task.intensity === "heavy"
               ? 3
               : 2,
-        estimated_energy_cost: task.cost,
+        estimated_energy_cost: task.type === "rest" ? 0 : task.cost,
+        estimated_recovery_gain: task.type === "rest" ? Math.abs(task.cost) : 0,
         status: "pending",
       });
 
-      toast.success("Task added.");
+      toast.success(task.type === "rest" ? "Rest added to your plan." : "Task added.");
       await loadPlan(selectedDate);
     } catch {
-      toast.error("Không thể thêm task.");
+      toast.error(task.type === "rest" ? "Could not add rest." : "Could not add the task.");
     }
   };
 
@@ -234,7 +220,7 @@ const Index = () => {
       await loadPlan(selectedDate);
       toast.success("Task removed.");
     } catch {
-      toast.error("Không thể xóa task.");
+      toast.error("Could not delete the task.");
     }
   };
 
@@ -242,36 +228,35 @@ const Index = () => {
     taskId: string,
     cost: number,
     type: "task" | "rest",
-  ) => {
-    if (!dayPlan) return false;
-
-    if (type === "rest") {
-      return true;
-    }
+  ): Promise<boolean | null> => {
+    if (!dayPlan) return null;
 
     const task = tasks.find((item) => item.task_id === taskId);
-
     if (!task) {
-      toast.error("Không tìm thấy task.");
-      return false;
+      toast.error("Task not found.");
+      return null;
     }
 
     try {
       const energyBefore = dayPlan.remaining_energy;
       const updatedPlan = await updateTaskStatus(taskId, "done");
 
-      setFeedback({
-        task,
-        energyBefore,
-        energyAfter: updatedPlan.remaining_energy,
-      });
+      if (type === "rest") {
+        const recovered = updatedPlan.remaining_energy - energyBefore;
+        toast.success(`Rest finished. Recovered ${recovered} energy.`);
+      } else {
+        setFeedback({
+          task,
+          energyBefore,
+          energyAfter: updatedPlan.remaining_energy,
+        });
+      }
 
       await loadPlan(selectedDate);
-
-      return energyBefore >= cost;
+      return type === "rest" || energyBefore >= cost;
     } catch {
-      toast.error("Không thể hoàn thành task.");
-      return false;
+      toast.error(type === "rest" ? "Could not finish rest." : "Could not complete the task.");
+      return null;
     }
   };
 
@@ -294,8 +279,17 @@ const Index = () => {
       toast.success("Feedback saved.");
       setFeedback(null);
     } catch {
-      toast.error("Không thể lưu feedback.");
+      toast.error("Could not save feedback.");
       throw new Error("Failed to save task feedback");
+    }
+  };
+
+  const handleMoveTask = async (taskId: string, direction: "up" | "down") => {
+    try {
+      await moveTask(taskId, direction);
+      await loadPlan(selectedDate);
+    } catch {
+      toast.error("Could not reorder the task.");
     }
   };
 
@@ -341,10 +335,7 @@ const Index = () => {
               energy={currentEnergy}
               maxEnergy={maxEnergy}
               previewCost={previewCost}
-              pendingCost={visibleTasks.reduce(
-                (sum, task) => sum + task.cost,
-                0,
-              )}
+              plannedTasks={visibleTasks}
               previewEnabled={previewEnabled}
               onPreviewEnabledChange={setPreviewEnabled}
             />
@@ -360,6 +351,7 @@ const Index = () => {
               energy={currentEnergy}
               onDoTask={handleDoTask}
               onDeleteTask={handleDeleteTask}
+              onMoveTask={handleMoveTask}
             />
 
             <RestPanel
@@ -368,11 +360,11 @@ const Index = () => {
             />
           </div>
 
-          <div className="lg:sticky lg:top-8 lg:h-[calc(100vh-8rem)]">
+          <div className="h-[min(560px,calc(100vh-2rem))] lg:sticky lg:top-8 lg:h-[calc(100vh-8rem)]">
             <ActivityLog
               logs={logs}
               onClear={() =>
-                toast.info("Activity log được lưu làm lịch sử và không thể xóa.")
+                toast.info("Activity log has been saved as history and cannot be deleted.")
               }
             />
           </div>
@@ -390,6 +382,7 @@ const Index = () => {
         onOpenChange={setCheckInOpen}
         dateLabel={format(selectedDate, "EEEE, MMMM d")}
         onSubmit={handleCreatePlan}
+        planDate={format(selectedDate, "yyyy-MM-dd")}
       />
 
       <TaskFeedbackDialog
