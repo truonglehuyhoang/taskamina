@@ -372,7 +372,7 @@ const Index = () => {
 
         {loading && (
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            Loading plans...
+            Loading plan...
           </p>
         )}
       </div>
