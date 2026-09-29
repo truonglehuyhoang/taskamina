@@ -53,19 +53,19 @@ export default function TaskFeedbackDialog(props: Props) {
 
         <div className="space-y-3">
           <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full rounded-lg border border-border bg-muted p-2">
-            {[30, 60, 120, 180].map((value) => <option key={value} value={value}>{value} min thực tế</option>)}
+            {[30, 60, 120, 180].map((value) => <option key={value} value={value}>{value} min actual</option>)}
           </select>
 
           <select value={intensity} onChange={(e) => setIntensity(Number(e.target.value))} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value={1}>Nhẹ</option>
-            <option value={2}>Vừa</option>
-            <option value={3}>Nặng</option>
+            <option value={1}>Light</option>
+            <option value={2}>Moderate</option>
+            <option value={3}>Heavy</option>
           </select>
 
           <select value={result} onChange={(e) => setResult(e.target.value as typeof result)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="lighter">Nhẹ hơn dự đoán</option>
-            <option value="as_expected">Đúng như dự đoán</option>
-            <option value="heavier">Mệt hơn dự đoán</option>
+            <option value="lighter">Easier than expected</option>
+            <option value="as_expected">As expected</option>
+            <option value="heavier">More tiring than expected</option>
           </select>
 
           <Button className="w-full" onClick={submit} disabled={saving}>

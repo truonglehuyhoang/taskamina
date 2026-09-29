@@ -10,12 +10,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { CreateCheckInInput } from "@/types/planning";
+import { format } from "date-fns";
 
 interface Props {
   dateLabel: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (input: CreateCheckInInput) => Promise<void>;
+  planDate: string;
 }
 
 export default function DailyCheckInDialog({
@@ -23,6 +25,7 @@ export default function DailyCheckInDialog({
   open,
   onOpenChange,
   onSubmit,
+  planDate,
 }: Props) {
   const [sleepQuality, setSleepQuality] = useState<CreateCheckInInput["sleep_quality"]>("okay");
   const [moodLevel, setMoodLevel] = useState<CreateCheckInInput["mood_level"]>("neutral");
@@ -31,21 +34,31 @@ export default function DailyCheckInDialog({
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const estimate = useMemo(() => {
-    let value = 70;
-    if (sleepQuality === "good") value += 15;
-    if (sleepQuality === "poor") value -= 20;
-    if (stressLevel === "high") value -= 15;
-    if (dayMode === "focused") value += 10;
-    if (dayMode === "survival") value -= 15;
-    return Math.max(20, Math.min(100, value));
-  }, [sleepQuality, stressLevel, dayMode]);
+  const energyBudgetByMode = {
+    survival: 40,
+    tired: 60,
+    normal: 80,
+    focused: 100,
+  } as const;
+
+  const estimate = energyBudgetByMode[dayMode];
 
   const submit = async () => {
     setSaving(true);
+    const now = new Date();
+    const isToday = planDate === format(now, "yyyy-MM-dd");
+    const hour = now.getHours();
+
+    const checkinType: CreateCheckInInput["checkin_type"] = !isToday
+      ? "manual"
+      : hour < 12
+        ? "morning"
+        : hour < 18
+          ? "midday"
+          : "evening";
     try {
       await onSubmit({
-        checkin_type: "morning",
+        checkin_type: checkinType,
         sleep_quality: sleepQuality,
         mood_level: moodLevel,
         stress_level: stressLevel,
@@ -70,30 +83,31 @@ export default function DailyCheckInDialog({
 
         <div className="space-y-3">
           <select value={sleepQuality} onChange={(e) => setSleepQuality(e.target.value as typeof sleepQuality)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="poor">Ngủ kém</option>
-            <option value="okay">Ngủ bình thường</option>
-            <option value="good">Ngủ ngon</option>
+            <option value="poor">Poor sleep</option>
+            <option value="okay">Normal sleep</option>
+            <option value="good">Good sleep</option>
           </select>
 
           <select value={moodLevel} onChange={(e) => setMoodLevel(e.target.value as typeof moodLevel)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="low">Mood thấp</option>
-            <option value="neutral">Bình thường</option>
-            <option value="good">Mood tốt</option>
+            <option value="low">Low mood</option>
+            <option value="neutral">Neutral</option>
+            <option value="good">Good mood</option>
           </select>
 
           <select value={stressLevel} onChange={(e) => setStressLevel(e.target.value as typeof stressLevel)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="low">Stress thấp</option>
-            <option value="medium">Stress vừa</option>
-            <option value="high">Stress cao</option>
+            <option value="low">Low stress</option>
+            <option value="medium">Moderate stress</option>
+            <option value="high">High stress</option>
           </select>
 
           <select value={dayMode} onChange={(e) => setDayMode(e.target.value as typeof dayMode)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="survival">Ngày sinh tồn</option>
-            <option value="normal">Ngày bình thường</option>
-            <option value="focused">Ngày sung sức</option>
+            <option value="survival">Very tired</option>
+            <option value="tired">Low energy</option>
+            <option value="normal">Normal</option>
+            <option value="focused">Energized</option>
           </select>
 
-          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ghi chú ngắn, không bắt buộc" />
+          <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note" />
 
           <Button onClick={submit} disabled={saving} className="w-full">
             {saving ? "Creating..." : `START PLAN · ${estimate} ENERGY`}

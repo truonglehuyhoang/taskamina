@@ -69,7 +69,8 @@ const RestPanel = ({ restCount, onAddRest }: RestPanelProps) => {
       </div>
 
       <p className="text-xs text-muted-foreground text-center">
-        Rest effectiveness: {effectiveness}% — {restCount > 2 ? "⚠️ diminishing returns!" : "resting too much reduces effect"}
+        The next rest is estimated to restore {effectiveness}% of its usual amount.
+        {restCount > 0 && " Repeated planned rests have lower estimated recovery."}
       </p>
     </div>
   );

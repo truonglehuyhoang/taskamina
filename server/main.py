@@ -2,6 +2,7 @@ import sqlite3
 import uuid
 from datetime import date
 import json
+import math
 
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,38 +34,44 @@ class CreateCheckInInput(BaseModel):
     sleep_quality: Literal["poor", "okay", "good"]
     mood_level: Literal["low", "neutral", "good"]
     stress_level: Literal["low", "medium", "high"]
-    day_mode: Literal["survival", "normal", "focused"]
+    day_mode: Literal["survival", "tired", "normal", "focused"]
     note: str | None = Field(default=None, max_length=2000)
 
 class CreateTaskInput(BaseModel):
     task_type_id: str = "general"
+    task_kind: Literal["work", "rest"] = "work"
     name: str = Field(min_length=1, max_length=255)
-    duration_minutes: int = Field(gt=0, le=1440)
+    duration_minutes: int = Field(ge=5, le=720)
     intensity_level: int = Field(ge=1, le=3)
-    estimated_energy_cost: int = Field(ge=0, le=100)
-    status: Literal["pending", "doing", "done", "skipped"] = "pending"
+    estimated_energy_cost: int = Field(default=0, ge=0)
+    status: Literal["pending"] = "pending"
 
+def compute_rest_gain(duration_minutes: int, previous_rest_count: int) -> int:
+    base_gain = {15: 10, 30: 20, 60: 30}[duration_minutes]
+    effectiveness = max(0.5, 1 - previous_rest_count * 0.2)
+    return math.floor(base_gain * effectiveness + 0.5)
 
 class UpdateTaskStatusInput(BaseModel):
     status: Literal["doing", "done", "skipped"]
 
 def compute_energy_budget(payload: CreateCheckInInput) -> int:
-    budget = 70
+    budgets = {
+        "survival": 40,
+        "tired": 60,
+        "normal": 80,
+        "focused": 100,
+    }
+    return budgets[payload.day_mode]
 
-    if payload.sleep_quality == "good":
-        budget += 15
-    elif payload.sleep_quality == "poor":
-        budget -= 20
+def compute_task_cost(duration_minutes: int, intensity_level: int) -> int:
+    multipliers = {1: 0.8, 2: 1.0, 3: 1.3}
 
-    if payload.stress_level == "high":
-        budget -= 15
-
-    if payload.day_mode == "focused":
-        budget += 10
-    elif payload.day_mode == "survival":
-        budget -= 15
-
-    return max(20, min(100, budget))
+    base_cost = (
+        duration_minutes / 3
+        if duration_minutes <= 60
+        else 20 + (duration_minutes - 60) * 0.25
+    )
+    return math.floor(base_cost * multipliers[intensity_level] + 0.5)
 
 def create_activity_log(
     connection,
@@ -109,11 +116,6 @@ class CreateTaskFeedbackInput(BaseModel):
     energy_before: int = Field(ge=0, le=100)
     energy_after: int = Field(ge=0, le=100)
     actual_energy_cost: int = Field(ge=0, le=100)
-
-
-class CreateRestInput(BaseModel):
-    duration_minutes: int = Field(gt=0, le=240)
-    requested_energy_gain: int = Field(gt=0, le=100)
 
 @app.on_event("startup")
 def startup():
@@ -222,6 +224,11 @@ def create_check_in(
 
         energy_budget = compute_energy_budget(payload)
 
+        has_check_in = connection.execute(
+            "SELECT 1 FROM daily_check_ins WHERE day_plan_id = ? LIMIT 1",
+            (day_plan_id,),
+        ).fetchone() is not None
+
         connection.execute(
             """
             INSERT INTO daily_check_ins (
@@ -251,7 +258,7 @@ def create_check_in(
         )
 
         # Morning check-in initializes today's usable energy.
-        if payload.checkin_type == "morning":
+        if not has_check_in:
             connection.execute(
                 """
                 UPDATE day_plans
@@ -294,54 +301,67 @@ def create_task(day_plan_id: str, payload: CreateTaskInput):
             "SELECT * FROM day_plans WHERE day_plan_id = ?",
             (day_plan_id,),
         ).fetchone()
-
         if not plan:
             raise HTTPException(status_code=404, detail="Day plan not found")
 
+        task_name = payload.name.strip()
+        if not task_name:
+            raise HTTPException(status_code=422, detail="Task name is required")
+
+        expected_type = "rest" if payload.task_kind == "rest" else payload.task_type_id
         task_type = connection.execute(
             "SELECT task_type_id FROM task_types WHERE task_type_id = ?",
-            (payload.task_type_id,),
+            (expected_type,),
         ).fetchone()
-
         if not task_type:
             raise HTTPException(status_code=422, detail="Task type not found")
+
+        if payload.task_kind == "rest":
+            if payload.duration_minutes not in (15, 30, 60):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Rest duration must be 15, 30, or 60 minutes",
+                )
+            previous_rest_count = connection.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM tasks
+                WHERE day_plan_id = ? AND task_kind = 'rest'
+                """,
+                (day_plan_id,),
+            ).fetchone()["total"]
+            estimated_cost = 0
+            estimated_gain = compute_rest_gain(
+                payload.duration_minutes, previous_rest_count
+            )
+        else:
+            estimated_cost = compute_task_cost(
+                payload.duration_minutes, payload.intensity_level
+            )
+            estimated_gain = 0
 
         position = connection.execute(
             """
             SELECT COALESCE(MAX(position), -1) + 1 AS next_position
-            FROM tasks
-            WHERE day_plan_id = ?
+            FROM tasks WHERE day_plan_id = ?
             """,
             (day_plan_id,),
         ).fetchone()["next_position"]
 
         task_id = str(uuid.uuid4())
-
         connection.execute(
             """
             INSERT INTO tasks (
-                task_id,
-                day_plan_id,
-                task_type_id,
-                name,
-                duration_minutes,
-                intensity_level,
-                estimated_energy_cost,
-                status,
-                position
+                task_id, day_plan_id, task_type_id, task_kind, name,
+                duration_minutes, intensity_level, estimated_energy_cost,
+                estimated_recovery_gain, status, position
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """,
             (
-                task_id,
-                day_plan_id,
-                payload.task_type_id,
-                payload.name.strip(),
-                payload.duration_minutes,
-                payload.intensity_level,
-                payload.estimated_energy_cost,
-                payload.status,
-                position,
+                task_id, day_plan_id, expected_type, payload.task_kind,
+                task_name, payload.duration_minutes, payload.intensity_level,
+                estimated_cost, estimated_gain, position,
             ),
         )
 
@@ -353,12 +373,11 @@ def create_task(day_plan_id: str, payload: CreateTaskInput):
             result="added",
             energy_before=plan["remaining_energy"],
             energy_after=plan["remaining_energy"],
-            metadata={"task_name": payload.name.strip()},
+            metadata={"task_name": task_name, "task_kind": payload.task_kind},
         )
 
         task = connection.execute(
-            "SELECT * FROM tasks WHERE task_id = ?",
-            (task_id,),
+            "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
         ).fetchone()
 
     return dict(task)
@@ -368,10 +387,8 @@ def create_task(day_plan_id: str, payload: CreateTaskInput):
 def update_task_status(task_id: str, payload: UpdateTaskStatusInput):
     with get_connection() as connection:
         task = connection.execute(
-            "SELECT * FROM tasks WHERE task_id = ?",
-            (task_id,),
+            "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
         ).fetchone()
-
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
@@ -380,26 +397,34 @@ def update_task_status(task_id: str, payload: UpdateTaskStatusInput):
             (task["day_plan_id"],),
         ).fetchone()
 
-        if task["status"] == "done" and payload.status == "done":
-            return dict(plan)
+        if task["status"] in ("done", "skipped"):
+            if task["status"] == payload.status:
+                return dict(plan)
+            raise HTTPException(
+                status_code=409, detail="Completed or skipped task cannot be reopened"
+            )
 
-        energy_before = plan["remaining_energy"]
-        energy_after = energy_before
+        before = plan["remaining_energy"]
+        after = before
         event_type = "task_started"
         result = "info"
 
         if payload.status == "done":
-            energy_after = max(
-                0,
-                energy_before - task["estimated_energy_cost"],
-            )
-
-            event_type = "task_completed"
-            result = (
-                "success"
-                if energy_before >= task["estimated_energy_cost"]
-                else "strained"
-            )
+            if task["task_kind"] == "rest":
+                after = min(
+                    plan["energy_budget"],
+                    before + task["estimated_recovery_gain"],
+                )
+                event_type = "rest_completed"
+                result = "rest"
+            else:
+                after = max(0, before - task["estimated_energy_cost"])
+                event_type = "task_completed"
+                result = (
+                    "success"
+                    if before >= task["estimated_energy_cost"]
+                    else "strained"
+                )
 
             connection.execute(
                 """
@@ -407,9 +432,8 @@ def update_task_status(task_id: str, payload: UpdateTaskStatusInput):
                 SET remaining_energy = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE day_plan_id = ?
                 """,
-                (energy_after, plan["day_plan_id"]),
+                (after, plan["day_plan_id"]),
             )
-
         elif payload.status == "skipped":
             event_type = "task_skipped"
             result = "skipped"
@@ -429,9 +453,13 @@ def update_task_status(task_id: str, payload: UpdateTaskStatusInput):
             task_id=task_id,
             event_type=event_type,
             result=result,
-            energy_before=energy_before,
-            energy_after=energy_after,
-            metadata={"task_name": task["name"]},
+            energy_before=before,
+            energy_after=after,
+            metadata={
+                "task_name": task["name"],
+                "task_kind": task["task_kind"],
+                "energy_change": after - before,
+            },
         )
 
         updated_plan = connection.execute(
@@ -515,6 +543,12 @@ def create_task_feedback(
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
 
+        if task["task_kind"] == "rest":
+            raise HTTPException(
+                status_code=409,
+                detail="Rest tasks do not use task feedback",
+            )
+
         if task["status"] != "done":
             raise HTTPException(
                 status_code=409,
@@ -567,53 +601,44 @@ def create_task_feedback(
 
     return dict(feedback)
 
+class MoveTaskInput(BaseModel):
+    direction: Literal["up", "down"]
 
-@app.post("/api/day-plans/{day_plan_id}/rests", status_code=201)
-def create_rest(
-    day_plan_id: str,
-    payload: CreateRestInput,
-):
+
+@app.patch("/api/tasks/{task_id}/move")
+def move_task(task_id: str, payload: MoveTaskInput):
     with get_connection() as connection:
-        plan = connection.execute(
-            "SELECT * FROM day_plans WHERE day_plan_id = ?",
-            (day_plan_id,),
+        task = connection.execute(
+            "SELECT * FROM tasks WHERE task_id = ?", (task_id,)
         ).fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
 
-        if not plan:
-            raise HTTPException(status_code=404, detail="Day plan not found")
+        if task["status"] not in ("pending", "doing"):
+            raise HTTPException(status_code=409, detail="Task is no longer active")
 
-        energy_before = plan["remaining_energy"]
-        energy_after = min(
-            plan["energy_budget"],
-            energy_before + payload.requested_energy_gain,
-        )
-
-        connection.execute(
-            """
-            UPDATE day_plans
-            SET remaining_energy = ?, updated_at = CURRENT_TIMESTAMP
+        operator = "<" if payload.direction == "up" else ">"
+        ordering = "DESC" if payload.direction == "up" else "ASC"
+        neighbor = connection.execute(
+            f"""
+            SELECT task_id, position FROM tasks
             WHERE day_plan_id = ?
+              AND status IN ('pending', 'doing')
+              AND position {operator} ?
+            ORDER BY position {ordering}
+            LIMIT 1
             """,
-            (energy_after, day_plan_id),
-        )
-
-        create_activity_log(
-            connection=connection,
-            day_plan_id=day_plan_id,
-            task_id=None,
-            event_type="rest_completed",
-            result="rest",
-            energy_before=energy_before,
-            energy_after=energy_after,
-            metadata={
-                "duration_minutes": payload.duration_minutes,
-                "recovered_energy": energy_after - energy_before,
-            },
-        )
-
-        updated_plan = connection.execute(
-            "SELECT * FROM day_plans WHERE day_plan_id = ?",
-            (day_plan_id,),
+            (task["day_plan_id"], task["position"]),
         ).fetchone()
 
-    return dict(updated_plan)
+        if neighbor:
+            connection.execute(
+                "UPDATE tasks SET position = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
+                (neighbor["position"], task_id),
+            )
+            connection.execute(
+                "UPDATE tasks SET position = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
+                (task["position"], neighbor["task_id"]),
+            )
+
+    return {"moved": neighbor is not None}

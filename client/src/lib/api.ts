@@ -68,12 +68,8 @@ export async function createTaskFeedback(
   await api.post(`/tasks/${taskId}/feedback`, input);
 }
 
-export async function recordRest(dayPlanId: string, durationMinutes: number, requestedGain: number) {
-  const response = await api.post<ApiDayPlan>(`/day-plans/${dayPlanId}/rests`, {
-    duration_minutes: durationMinutes,
-    requested_energy_gain: requestedGain,
-  });
-  return response.data;
+export async function moveTask(taskId: string, direction: "up" | "down") {
+  await api.patch(`/tasks/${taskId}/move`, { direction });
 }
 
 export async function getActivityLogs(dayPlanId: string) {
