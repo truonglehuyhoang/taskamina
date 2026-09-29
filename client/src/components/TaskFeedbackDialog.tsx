@@ -45,28 +45,51 @@ export default function TaskFeedbackDialog(props: Props) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display tracking-widest">TASK FEEDBACK</DialogTitle>
           <DialogDescription>{props.taskName}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-3">
-          <select value={duration} onChange={(e) => setDuration(Number(e.target.value))} className="w-full rounded-lg border border-border bg-muted p-2">
-            {[30, 60, 120, 180].map((value) => <option key={value} value={value}>{value} min actual</option>)}
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="actual-duration" className="block text-sm text-foreground">
+              How long did this task actually take?
+            </label>
+            <select id="actual-duration" value={duration}
+              onChange={(e) => setDuration(Number(e.target.value))}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              {[30, 60, 120, 180].map((value) => (
+                <option key={value} value={value}>{value} min</option>
+              ))}
+            </select>
+          </div>
 
-          <select value={intensity} onChange={(e) => setIntensity(Number(e.target.value))} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value={1}>Light</option>
-            <option value={2}>Moderate</option>
-            <option value={3}>Heavy</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="perceived-intensity" className="block text-sm text-foreground">
+              How demanding did this task feel?
+            </label>
+            <select id="perceived-intensity" value={intensity}
+              onChange={(e) => setIntensity(Number(e.target.value))}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value={1}>Light</option>
+              <option value={2}>Moderate</option>
+              <option value={3}>Heavy</option>
+            </select>
+          </div>
 
-          <select value={result} onChange={(e) => setResult(e.target.value as typeof result)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="lighter">Easier than expected</option>
-            <option value="as_expected">As expected</option>
-            <option value="heavier">More tiring than expected</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="energy-result" className="block text-sm text-foreground">
+              Compared with your estimate, how tiring was it?
+            </label>
+            <select id="energy-result" value={result}
+              onChange={(e) => setResult(e.target.value as typeof result)}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value="lighter">Easier than expected</option>
+              <option value="as_expected">As expected</option>
+              <option value="heavier">More tiring than expected</option>
+            </select>
+          </div>
 
           <Button className="w-full" onClick={submit} disabled={saving}>
             {saving ? "Saving..." : "SAVE FEEDBACK"}

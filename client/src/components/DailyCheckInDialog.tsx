@@ -72,7 +72,7 @@ export default function DailyCheckInDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-md overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display tracking-widest flex items-center gap-2">
             <BatteryCharging className="h-5 w-5 text-primary" />
@@ -82,30 +82,58 @@ export default function DailyCheckInDialog({
         </DialogHeader>
 
         <div className="space-y-3">
-          <select value={sleepQuality} onChange={(e) => setSleepQuality(e.target.value as typeof sleepQuality)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="poor">Poor sleep</option>
-            <option value="okay">Normal sleep</option>
-            <option value="good">Good sleep</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="sleep-quality" className="block text-sm text-foreground">
+              How well did you sleep last night?
+            </label>
+            <select id="sleep-quality" value={sleepQuality}
+              onChange={(e) => setSleepQuality(e.target.value as typeof sleepQuality)}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value="poor">Poor sleep</option>
+              <option value="okay">Normal sleep</option>
+              <option value="good">Good sleep</option>
+            </select>
+          </div>
 
-          <select value={moodLevel} onChange={(e) => setMoodLevel(e.target.value as typeof moodLevel)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="low">Low mood</option>
-            <option value="neutral">Neutral</option>
-            <option value="good">Good mood</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="mood-level" className="block text-sm text-foreground">
+              How is your mood right now?
+            </label>
+            <select id="mood-level" value={moodLevel}
+              onChange={(e) => setMoodLevel(e.target.value as typeof moodLevel)}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value="low">Low mood</option>
+              <option value="neutral">Neutral</option>
+              <option value="good">Good mood</option>
+            </select>
+          </div>
 
-          <select value={stressLevel} onChange={(e) => setStressLevel(e.target.value as typeof stressLevel)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="low">Low stress</option>
-            <option value="medium">Moderate stress</option>
-            <option value="high">High stress</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="stress-level" className="block text-sm text-foreground">
+              How stressed do you feel right now?
+            </label>
+            <select id="stress-level" value={stressLevel}
+              onChange={(e) => setStressLevel(e.target.value as typeof stressLevel)}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value="low">Low stress</option>
+              <option value="medium">Moderate stress</option>
+              <option value="high">High stress</option>
+            </select>
+          </div>
 
-          <select value={dayMode} onChange={(e) => setDayMode(e.target.value as typeof dayMode)} className="w-full rounded-lg border border-border bg-muted p-2">
-            <option value="survival">Very tired</option>
-            <option value="tired">Low energy</option>
-            <option value="normal">Normal</option>
-            <option value="focused">Energized</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="day-mode" className="block text-sm text-foreground">
+              How much energy do you feel you have today?
+            </label>
+            <select id="day-mode" value={dayMode}
+              onChange={(e) => setDayMode(e.target.value as typeof dayMode)}
+              className="w-full rounded-lg border border-border bg-muted p-2">
+              <option value="survival">Very tired</option>
+              <option value="tired">Low energy</option>
+              <option value="normal">Normal</option>
+              <option value="focused">Energized</option>
+            </select>
+          </div>
 
           <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Optional note" />
 
