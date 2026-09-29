@@ -7,7 +7,9 @@ import type {
 } from "@/types/planning";
 
 const api = axios.create({
-  baseURL: "http://127.0.0.1:8080/api",
+  baseURL: import.meta.env.DEV
+    ?"http://127.0.0.1:8080/api"
+    : "/api",
 });
 
 export const DEFAULT_USER_ID = "local-user";
