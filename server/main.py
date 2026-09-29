@@ -1,14 +1,20 @@
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import run_migrations
 from app.routers import activity_logs, day_plans, tasks
 
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    run_migrations() # Chạy trước khi API nhận request
-    yield            # App hoạt động; sau yield là phần shutdown nếu cần
+async def lifespan(_app: FastAPI):
+    run_migrations()
+    yield
+
 
 app = FastAPI(title="Taskamina API", lifespan=lifespan)
 
@@ -31,3 +37,18 @@ app.include_router(activity_logs.router)
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+if getattr(sys, "frozen", False):
+    frontend_dir = Path(sys._MEIPASS) / "client_dist"
+    if not frontend_dir.is_dir():
+        raise RuntimeError("Bundled frontend files are missing")
+else:
+    frontend_dir = Path(__file__).resolve().parent.parent / "client" / "dist"
+
+if frontend_dir.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(frontend_dir), html=True),
+        name="frontend",
+    )
